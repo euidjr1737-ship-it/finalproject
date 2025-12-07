@@ -1,71 +1,206 @@
+# app.py
 import streamlit as st
-from openai import OpenAI
-import os
+import math
+import random
 
-# -------------------------
-# OpenAI Client
-# -------------------------
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+st.set_page_config(page_title="MBTI Finder & 이상형 분석기", layout="centered")
 
-# -------------------------
-# Profile Generation Function
-# -------------------------
-def generate_profile(extro, empathy, humor, stability, vibe, hair, style, keywords, free_text):
-    prompt = f"""
-    Create a short persona description based on these settings:
+# ----------------------------
+# 데이터: MBTI 설명 (간단 예시)
+# ----------------------------
+MBTI_DATA = {
+    "INTJ": {
+        "desc": "전략가형: 분석적이고 계획적이며 내향적.",
+        "strengths": ["전략적 사고", "독립적", "문제 해결 능력"],
+        "weaknesses": ["감정 표현 부족", "융통성 부족"],
+        "jobs": ["연구원", "데이터 사이언티스트", "전략 컨설턴트"],
+        "celebrity": "엘론 머스크(예시)",
+        "meme": "나는 계획이 있다... 그리고 더 많은 계획이 있다."
+    },
+    "ENTP": {
+        "desc": "발명가형: 아이디어가 넘치고 토론을 즐긴다.",
+        "strengths": ["창의성", "즉흥력", "토론 능력"],
+        "weaknesses": ["집중 지속 어려움", "완성도 낮음"],
+        "jobs": ["스타트업 창업가", "마케터", "기획자"],
+        "celebrity": "리처드 브랜슨(예시)",
+        "meme": "또 다른 아이디어? 당연하지."
+    },
+    # (간단화를 위해 대표 두 타입만 넣었음 — 필요하면 더 추가)
+}
 
-    Extroversion: {extro}/10
-    Empathy: {empathy}/10
-    Humor: {humor}/10
-    Emotional Stability: {stability}/10
+# 기본: 모든 조합 없으면 '기본 설명'
+def get_mbti_info(mbti):
+    return MBTI_DATA.get(mbti, {
+        "desc": "아직 데이터 없음(예시 데이터만 포함).",
+        "strengths": ["알 수 없음"],
+        "weaknesses": ["알 수 없음"],
+        "jobs": ["다양한 직업 적합"],
+        "celebrity": "해당 없음",
+        "meme": "그 유형의 밈이 없음..."
+    })
 
-    Vibe: {vibe}
-    Hair Style: {hair}
-    Fashion Style: {style}
+# ----------------------------
+# 데이터: 20개 캐릭터 (예시 축약판)
+# traits: [털많음, 부드러움, 카리스마, 안정감] (0-100)
+# ----------------------------
+CHARACTERS = [
+    {"name": "루나", "traits": [70, 80, 40, 60],
+     "desc": "따뜻하고 포근한 존재. 소소한 안정감을 준다.",
+     "strengths": ["애정표현", "배려심"]},
+    {"name": "카이", "traits": [20, 40, 90, 50],
+     "desc": "카리스마 넘치고 주도적인 타입.",
+     "strengths": ["리더십", "결단력"]},
+    {"name": "미오", "traits": [50, 90, 30, 80],
+     "desc": "세심하고 포근한 이미지, 믿음직스러움.",
+     "strengths": ["신뢰감", "공감 능력"]},
+    {"name": "제로", "traits": [10, 30, 95, 20],
+     "desc": "차갑지만 매력적인 카리스마형.",
+     "strengths": ["독립성", "압도적 존재감"]},
+    {"name": "벨라", "traits": [85, 70, 20, 65],
+     "desc": "애교 많고 붙임성 좋은 타입.",
+     "strengths": ["친화력", "낙천성"]},
+    {"name": "솔", "traits": [30, 50, 60, 90],
+     "desc": "차분하고 안정적인 보호자형.",
+     "strengths": ["신뢰성", "책임감"]},
+    {"name": "에이든", "traits": [40, 60, 70, 40],
+     "desc": "적당한 카리스마와 부드러움을 가진 균형형.",
+     "strengths": ["균형감", "융통성"]},
+    {"name": "린", "traits": [60, 85, 35, 55],
+     "desc": "따뜻하고 감성적인 예술가형.",
+     "strengths": ["감성표현", "창의성"]},
+    {"name": "오스카", "traits": [25, 35, 85, 45],
+     "desc": "쿨하고 강렬한 이미지.",
+     "strengths": ["카리스마", "독립심"]},
+    {"name": "하늘", "traits": [50, 50, 50, 50],
+     "desc": "무난하고 밸런스 좋은 타입.",
+     "strengths": ["적응력", "균형"]},
+    # 10개만 예시로 채워뒀음. 실제로는 20개 정도 더 추가하면 좋음.
+]
 
-    Keywords: {keywords}
-    Extra Notes: {free_text}
+# ----------------------------
+# 도구 함수: MBTI 계산
+# 방식: 4개 축 각각 0-100 슬라이더 (높을수록 왼쪽 성향)
+# 예: E vs I -> E 점수 slider (0 내향 ~ 100 외향)
+# 기준: 50 이상이면 왼쪽(E) 아니면 I
+# ----------------------------
+def calc_mbti(e_score, n_score, t_score, j_score):
+    letters = []
+    letters.append("E" if e_score >= 50 else "I")
+    letters.append("N" if n_score >= 50 else "S")
+    letters.append("T" if t_score >= 50 else "F")
+    letters.append("J" if j_score >= 50 else "P")
+    mbti = "".join(letters)
+    # 퍼센트 표현: 각 축에서 해당 편향의 절대값
+    percents = {
+        "E_percent": e_score,
+        "N_percent": n_score,
+        "T_percent": t_score,
+        "J_percent": j_score
+    }
+    return mbti, percents
 
-    Produce a friendly, creative profile in 5~7 sentences.
-    """
+# ----------------------------
+# 도구 함수: kNN (k=1) - 유클리드 거리
+# ----------------------------
+def find_nearest_character(user_traits):
+    best = None
+    best_dist = None
+    for ch in CHARACTERS:
+        dist = math.sqrt(sum((u - v) ** 2 for u, v in zip(user_traits, ch["traits"])))
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = ch
+    return best, best_dist
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    return response.choices[0].message["content"]
+# ----------------------------
+# UI
+# ----------------------------
+st.title("MBTI Finder & 이상형 분석기 — 형 전용 버전")
+st.write("둘 중 하나 골라. 교수님한테 보여줘도 창피하지 않게 정리해놨음.")
 
+app_mode = st.sidebar.selectbox("모드 선택", ["MBTI Finder", "이상형 분석기"])
 
-# -------------------------
-# Streamlit UI
-# -------------------------
-st.title("AI Personality Generator ✨")
+if app_mode == "MBTI Finder":
+    st.header("🧠 MBTI Finder")
+    st.write("슬라이더를 조절해서 네 성향을 입력해. 0-100 (높을수록 왼쪽 성향)")
 
-st.write("Adjust the sliders and options to generate a unique AI character profile!")
+    e_score = st.slider("외향성(E) ← 0 (내향) ... 100 (외향) →", min_value=0, max_value=100, value=45)
+    n_score = st.slider("직관(N) ← 0 (감각) ... 100 (직관) →", min_value=0, max_value=100, value=55)
+    t_score = st.slider("사고(T) ← 0 (감정) ... 100 (사고) →", min_value=0, max_value=100, value=50)
+    j_score = st.slider("계획(J) ← 0 (즉흥) ... 100 (계획) →", min_value=0, max_value=100, value=60)
 
-st.subheader("Personality Settings")
+    if st.button("결과 보기"):
+        mbti, perc = calc_mbti(e_score, n_score, t_score, j_score)
+        info = get_mbti_info(mbti)
 
-extro = st.slider("Extroversion", 0, 10, 5)
-empathy = st.slider("Empathy", 0, 10, 5)
-humor = st.slider("Humor", 0, 10, 5)
-stability = st.slider("Emotional Stability", 0, 10, 5)
+        st.subheader(f"예상 MBTI: {mbti}")
+        st.write(info["desc"])
+        st.write("**강점**: " + ", ".join(info["strengths"]))
+        st.write("**약점**: " + ", ".join(info["weaknesses"]))
+        st.write("**추천 직업**: " + ", ".join(info["jobs"]))
+        st.write("**해당 유형 연예인(예시)**: " + info["celebrity"])
+        st.markdown("---")
+        st.write("**세부 점수(0-100)**")
+        st.write(f"E 점수: {perc['E_percent']:.0f} / N 점수: {perc['N_percent']:.0f} / T 점수: {perc['T_percent']:.0f} / J 점수: {perc['J_percent']:.0f}")
 
-st.subheader("Appearance & Style")
+        st.markdown("---")
+        st.write("**재미있는 밈**")
+        # 밈 샘플
+        memes = [
+            "“아니.. 그거 내 스타일인데 왜 내가 모르는 거야?”",
+            "“내 계획: 1) 계획 세우기 2) 계획 세우기 3) 계획 세우기”",
+            "“감정은 뒤로 미뤄도 돼. 문제는 미뤄진 감정이 터질 때.”",
+            "“팀 회의 요약: 아이디어 100개, 실행 0개.”"
+        ]
+        st.info(random.choice(memes))
 
-vibe = st.selectbox("Overall Vibe", ["Cute", "Cool", "Mysterious", "Elegant", "Chaotic"])
-hair = st.selectbox("Hair Style", ["Short", "Medium", "Long", "Curly", "Dyed"])
-style = st.selectbox("Fashion Style", ["Street", "Modern", "Classic", "Gothic", "Minimal"])
+        st.success("교수님: '데이터 드리븐 접근 잘했네.' (내 말 아님, 너 말이 맞아.)")
 
-keywords = st.text_input("Keywords (comma-separated)", "")
-free_text = st.text_area("Additional Notes")
+elif app_mode == "이상형 분석기":
+    st.header("💘 이상형 분석기 (간단 kNN)")
+    st.write("네가 원하는 4가지 속성을 슬라이더로 입력하면, 저장된 캐릭터 중 가장 가까운 캐릭터를 찾아줌.")
 
-if st.button("Generate Profile"):
-    with st.spinner("Generating..."):
-        try:
-            profile = generate_profile(extro, empathy, humor, stability, vibe, hair, style, keywords, free_text)
-            st.success("Profile Created!")
-            st.write(profile)
-        except Exception as e:
-            st.error("Error occurred. Check your API key or code.")
-            st.code(str(e))
+    t_fur = st.slider("털이 많은 정도", 0, 100, 50)
+    t_soft = st.slider("부드러움", 0, 100, 60)
+    t_char = st.slider("카리스마", 0, 100, 50)
+    t_safe = st.slider("안정감", 0, 100, 50)
+
+    if st.button("추천 받기"):
+        user_traits = [t_fur, t_soft, t_char, t_safe]
+        best, dist = find_nearest_character(user_traits)
+        st.subheader(f"추천 캐릭터: {best['name']}")
+        st.write(best["desc"])
+        st.write("**강점**: " + ", ".join(best["strengths"]))
+        st.write(f"유사도 거리(작을수록 유사): {dist:.2f}")
+
+        # 규칙 기반 매칭 설명
+        st.markdown("---")
+        st.write("**형이 왜 이 캐릭터와 잘 맞는지(규칙 기반 분석)**")
+        reasons = []
+        trait_names = ["털많음", "부드러움", "카리스마", "안정감"]
+        for i, (u, v) in enumerate(zip(user_traits, best["traits"])):
+            diff = abs(u - v)
+            if diff <= 10:
+                reasons.append(f"- {trait_names[i]}: 거의 일치 ({u} vs {v}) — *굉장히 잘 맞음*")
+            elif diff <= 25:
+                reasons.append(f"- {trait_names[i]}: 비슷한 편 ({u} vs {v}) — *보완 가능*")
+            else:
+                reasons.append(f"- {trait_names[i]}: 차이 큼 ({u} vs {v}) — *다른 점이 매력 포인트일 수 있음*")
+        for r in reasons:
+            st.write(r)
+
+        st.markdown("---")
+        st.write("**교수님 프레젠테이션용 한 줄**")
+        st.write(f"> 사용자는 선택한 4차원 선호도(털:{t_fur}, 부드러움:{t_soft}, 카리스마:{t_char}, 안정감:{t_safe})를 기반으로 '{best['name']}'을 추천받았습니다. (단순 kNN 방식)")
+
+        st.info("참고: 데이터는 로컬 dict로 저장되어 있어 API 필요 없음. 더 많은 캐릭터를 추가하면 정확도가 올라감.")
+
+# 하단: 도움말 및 확장 제안
+st.sidebar.markdown("---")
+st.sidebar.write("확장 아이디어:")
+st.sidebar.write("- MBTI 데이터베이스 확장 (16유형 모두)")
+st.sidebar.write("- 캐릭터 20~50개로 늘리고 가중치 설정 추가")
+st.sidebar.write("- k>1 투표 방식, 표준화 (z-score) 적용")
+st.sidebar.write("- 결과를 PDF로 저장(보고서 제출용)")
+
+st.sidebar.markdown("Made for: 형 — Streamlit 과제용 깔끔한 데모")
