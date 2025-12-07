@@ -1,206 +1,221 @@
 # app.py
 import streamlit as st
-import math
+import os
 import random
+import textwrap
+from datetime import datetime
 
-st.set_page_config(page_title="MBTI Finder & 이상형 분석기", layout="centered")
+# Optional: OpenAI 사용 (있으면 더 정교하게 생성)
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except Exception:
+    OPENAI_AVAILABLE = False
+
+st.set_page_config(page_title="창작 대본 발전기 — Role-based Script Booster", layout="wide")
 
 # ----------------------------
-# 데이터: MBTI 설명 (간단 예시)
+# 역할(롤) 시스템 프롬프트 템플릿
 # ----------------------------
-MBTI_DATA = {
-    "INTJ": {
-        "desc": "전략가형: 분석적이고 계획적이며 내향적.",
-        "strengths": ["전략적 사고", "독립적", "문제 해결 능력"],
-        "weaknesses": ["감정 표현 부족", "융통성 부족"],
-        "jobs": ["연구원", "데이터 사이언티스트", "전략 컨설턴트"],
-        "celebrity": "엘론 머스크(예시)",
-        "meme": "나는 계획이 있다... 그리고 더 많은 계획이 있다."
-    },
-    "ENTP": {
-        "desc": "발명가형: 아이디어가 넘치고 토론을 즐긴다.",
-        "strengths": ["창의성", "즉흥력", "토론 능력"],
-        "weaknesses": ["집중 지속 어려움", "완성도 낮음"],
-        "jobs": ["스타트업 창업가", "마케터", "기획자"],
-        "celebrity": "리처드 브랜슨(예시)",
-        "meme": "또 다른 아이디어? 당연하지."
-    },
-    # (간단화를 위해 대표 두 타입만 넣었음 — 필요하면 더 추가)
+ROLE_PROMPTS = {
+    "시나리오 작가": (
+        "당신은 경험 많은 시나리오 작가입니다. "
+        "주어진 장면의 콘셉트, 등장인물 감정선, 비트(장면 전개)를 구조화하여 드라마틱한 장면 대본을 만들어 주세요. "
+        "대화(Dialogue), 행동(Blocking), 감정(Emotion) 표기를 명확히 하고, 장면의 의도와 핵심 갈등을 한 문장으로 요약해 주세요."
+    ),
+    "인물 분석가": (
+        "당신은 캐릭터 분석 전문가입니다. "
+        "주어진 등장인물들의 동기, 과거사, 심리적 갈등을 분석하고 그들이 장면에서 보일 자연스러운 반응을 문장과 대사 예시로 작성하세요. "
+        "캐릭터 간 미묘한 힘의 역학과 숨은 욕구를 지적해 주세요."
+    ),
+    "서사 구조 전문가": (
+        "당신은 서사 구조 전문가입니다. "
+        "입력받은 장면을 전체 이야기 구조(3막, 8시퀀스 등)에서 어디에 배치할지, 이 장면이 의미하는 이야기적 기능(촉발, 반전, 결단 등)을 설명하고, 장면을 강화하기 위한 전/후속 아이디어를 제안하세요. "
+        "구체적 지시(장면 길이, 템포, 전환 아이디어)를 포함하세요."
+    ),
+    "극작가": (
+        "당신은 극작가입니다. "
+        "무대극의 시점으로 장면을 재작성하세요. 대사, 동선, 소품, 음향 큐 등을 포함하고 배우 지시(Acting Notes)를 구체적으로 적어주세요."
+    ),
+    "카메라 워크 감독": (
+        "당신은 촬영감독(카메라 워크 전문가)입니다. "
+        "해당 장면을 영화 혹은 드라마 촬영 관점에서 재해석하여 샷리스트(카메라 앵글·렌즈 제안), 무빙, 컷 편집 아이디어, 조명 톤을 제시하세요. "
+        "감정 전달을 위한 시각적 포커스와 컷 전환 포인트를 명확히 하세요."
+    )
 }
 
-# 기본: 모든 조합 없으면 '기본 설명'
-def get_mbti_info(mbti):
-    return MBTI_DATA.get(mbti, {
-        "desc": "아직 데이터 없음(예시 데이터만 포함).",
-        "strengths": ["알 수 없음"],
-        "weaknesses": ["알 수 없음"],
-        "jobs": ["다양한 직업 적합"],
-        "celebrity": "해당 없음",
-        "meme": "그 유형의 밈이 없음..."
-    })
-
 # ----------------------------
-# 데이터: 20개 캐릭터 (예시 축약판)
-# traits: [털많음, 부드러움, 카리스마, 안정감] (0-100)
+# 로컬(오프라인) 템플릿 생성 유틸
 # ----------------------------
-CHARACTERS = [
-    {"name": "루나", "traits": [70, 80, 40, 60],
-     "desc": "따뜻하고 포근한 존재. 소소한 안정감을 준다.",
-     "strengths": ["애정표현", "배려심"]},
-    {"name": "카이", "traits": [20, 40, 90, 50],
-     "desc": "카리스마 넘치고 주도적인 타입.",
-     "strengths": ["리더십", "결단력"]},
-    {"name": "미오", "traits": [50, 90, 30, 80],
-     "desc": "세심하고 포근한 이미지, 믿음직스러움.",
-     "strengths": ["신뢰감", "공감 능력"]},
-    {"name": "제로", "traits": [10, 30, 95, 20],
-     "desc": "차갑지만 매력적인 카리스마형.",
-     "strengths": ["독립성", "압도적 존재감"]},
-    {"name": "벨라", "traits": [85, 70, 20, 65],
-     "desc": "애교 많고 붙임성 좋은 타입.",
-     "strengths": ["친화력", "낙천성"]},
-    {"name": "솔", "traits": [30, 50, 60, 90],
-     "desc": "차분하고 안정적인 보호자형.",
-     "strengths": ["신뢰성", "책임감"]},
-    {"name": "에이든", "traits": [40, 60, 70, 40],
-     "desc": "적당한 카리스마와 부드러움을 가진 균형형.",
-     "strengths": ["균형감", "융통성"]},
-    {"name": "린", "traits": [60, 85, 35, 55],
-     "desc": "따뜻하고 감성적인 예술가형.",
-     "strengths": ["감성표현", "창의성"]},
-    {"name": "오스카", "traits": [25, 35, 85, 45],
-     "desc": "쿨하고 강렬한 이미지.",
-     "strengths": ["카리스마", "독립심"]},
-    {"name": "하늘", "traits": [50, 50, 50, 50],
-     "desc": "무난하고 밸런스 좋은 타입.",
-     "strengths": ["적응력", "균형"]},
-    # 10개만 예시로 채워뒀음. 실제로는 20개 정도 더 추가하면 좋음.
+SAMPLE_BEATS = [
+    "시작: 불편한 침묵이 흐른다. 한 인물이 과거를 떠올린다.",
+    "중반: 갈등이 폭발하고 비밀이 드러난다.",
+    "클라이맥스: 선택의 순간, 인물이 결단을 내린다.",
+    "엔딩: 여운이 남는 대사 한 줄로 장면을 마무리한다."
 ]
 
-# ----------------------------
-# 도구 함수: MBTI 계산
-# 방식: 4개 축 각각 0-100 슬라이더 (높을수록 왼쪽 성향)
-# 예: E vs I -> E 점수 slider (0 내향 ~ 100 외향)
-# 기준: 50 이상이면 왼쪽(E) 아니면 I
-# ----------------------------
-def calc_mbti(e_score, n_score, t_score, j_score):
-    letters = []
-    letters.append("E" if e_score >= 50 else "I")
-    letters.append("N" if n_score >= 50 else "S")
-    letters.append("T" if t_score >= 50 else "F")
-    letters.append("J" if j_score >= 50 else "P")
-    mbti = "".join(letters)
-    # 퍼센트 표현: 각 축에서 해당 편향의 절대값
-    percents = {
-        "E_percent": e_score,
-        "N_percent": n_score,
-        "T_percent": t_score,
-        "J_percent": j_score
-    }
-    return mbti, percents
+SAMPLE_LINES = [
+    "“그때 네가 없었더라면 난... 아무도 아니었을 거야.”",
+    "“그건 네가 알 바 아니야.”",
+    "“미안해. 나도 몰랐어.”",
+    "“우리가 원하던 결말이 아니어도, 살아남아야 해.”",
+    "“조용히 해. 지금은 말하면 안 돼.”"
+]
+
+def local_generate(role, prompt, characters, tone, length):
+    """간단한 템플릿 기반 로컬 생성기 (OpenAI API 없을 때)"""
+    random.seed(hash(prompt) + len(role) + len(tone))
+    title = f"[장면] {prompt[:40]}".strip()
+    beats = random.sample(SAMPLE_BEATS, k=min(3, len(SAMPLE_BEATS)))
+    lines = random.sample(SAMPLE_LINES, k=5)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    txt = []
+    txt.append(f"제목: {title}")
+    txt.append(f"생성일시: {now}")
+    txt.append(f"선택 롤: {role} / 톤: {tone} / 길이: {length}")
+    txt.append("")
+    txt.append("요약(한 문장):")
+    txt.append(f"- {prompt}")
+    txt.append("")
+    txt.append("핵심 비트:")
+    for b in beats:
+        txt.append(f"- {b}")
+    txt.append("")
+    txt.append("등장인물 및 메모:")
+    if characters.strip():
+        for c in [x.strip() for x in characters.split(",") if x.strip()]:
+            txt.append(f"- {c}: 간단 메모 (여기에 성격/목표 입력)")
+    else:
+        txt.append("- 없음 (입력하지 않음)")
+    txt.append("")
+    txt.append("장면 대본 (샘플):")
+    txt.append("")
+    for i, ln in enumerate(lines, 1):
+        speaker = random.choice([c for c in (characters.split(",") if characters.strip() else ["A", "B"])])
+        txt.append(f"{speaker.strip() if isinstance(speaker, str) else 'A'}: {ln}")
+        txt.append(f"    (Action) {random.choice(['몸을 돌린다.', '주먹을 쥔다.', '눈을 피한다.'])}")
+        if i % 2 == 0:
+            txt.append("")
+    txt.append("")
+    txt.append("연출 메모:")
+    if role == "카메라 워크 감독":
+        txt.append("- 샷1: 클로즈업으로 감정 전달 / 느린 줌 아웃")
+        txt.append("- 조명: 저채도, 차가운 블루 톤")
+    elif role == "극작가":
+        txt.append("- 무대: 단출한 소품, 문 하나")
+        txt.append("- 배우지시: 천천히 말하되 숨을 길게 사용")
+    else:
+        txt.append("- (역할 기반 일반 추천) 감정선 강조, 리듬 조절")
+    return "\n".join(txt)
 
 # ----------------------------
-# 도구 함수: kNN (k=1) - 유클리드 거리
+# OpenAI 호출 유틸 (있으면 사용)
 # ----------------------------
-def find_nearest_character(user_traits):
-    best = None
-    best_dist = None
-    for ch in CHARACTERS:
-        dist = math.sqrt(sum((u - v) ** 2 for u, v in zip(user_traits, ch["traits"])))
-        if best_dist is None or dist < best_dist:
-            best_dist = dist
-            best = ch
-    return best, best_dist
+def openai_generate(role, prompt, characters, tone, length):
+    system = ROLE_PROMPTS.get(role, "당신은 전문가입니다.")
+    user_msg = (
+        f"장면 설명: {prompt}\n"
+        f"등장인물(콤마로 구분): {characters}\n"
+        f"톤: {tone}\n"
+        f"원하는 길이: {length}\n\n"
+        "요청: 해당 역할의 관점으로 장면 대본(대사/액션/연출노트)을 작성해 주세요. "
+        "한 문장 요약, 핵심 비트, 등장인물 행동, 대사 예시, 연출/촬영/연기 지시를 포함해 주세요."
+    )
+    # 우선 환경변수 OPENAI_API_KEY 확인 (st.secrets 또는 os.environ)
+    api_key = None
+    # streamlit secrets 우선
+    try:
+        api_key = st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        api_key = os.getenv("OPENAI_API_KEY", None)
+
+    if not api_key:
+        raise RuntimeError("OpenAI API key not found in st.secrets or OPENAI_API_KEY env var.")
+
+    # 설정
+    openai.api_key = api_key
+    # 모델은 사용환경에 따라 바꿔쓰기 (gpt-4o 계열 사용 권장)
+    model = "gpt-4o-mini" if OPENAI_AVAILABLE else "gpt-4o-mini"
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_msg}
+    ]
+    # ChatCompletion (chat api)
+    try:
+        # 최신 openai 라이브러리 호환성 고려
+        completion = openai.ChatCompletion.create(
+            model=model,
+            messages=messages,
+            temperature=0.8,
+            max_tokens=900
+        )
+        content = completion.choices[0].message["content"]
+        return content
+    except Exception as e:
+        # 실패 시 예외 전파
+        raise e
 
 # ----------------------------
 # UI
 # ----------------------------
-st.title("MBTI Finder & 이상형 분석기 — 형 전용 버전")
-st.write("둘 중 하나 골라. 교수님한테 보여줘도 창피하지 않게 정리해놨음.")
+st.title("🎬 창작 대본 발전기 — Role-based Script Booster")
+st.write("롤을 고르고 장면 아이디어를 써 넣으면, 그 롤 관점으로 장면을 발전시켜줍니다.")
+st.markdown("---")
 
-app_mode = st.sidebar.selectbox("모드 선택", ["MBTI Finder", "이상형 분석기"])
+col1, col2 = st.columns([2, 1])
 
-if app_mode == "MBTI Finder":
-    st.header("🧠 MBTI Finder")
-    st.write("슬라이더를 조절해서 네 성향을 입력해. 0-100 (높을수록 왼쪽 성향)")
+with col1:
+    role = st.selectbox("역할(Role) 선택", list(ROLE_PROMPTS.keys()), index=0)
+    prompt = st.text_area("장면(씬) 한 줄 설명 — 상황/감정/목적을 자유롭게 적어라:", height=140,
+                          placeholder="예: 폭설 내리는 역에서 두 사람이 우연히 재회한다. 한 명은 과거를 숨기고 있다.")
+    chars = st.text_input("등장인물 (콤마로 구분) — 예: 지훈, 수아, 역무원", placeholder="없으면 비워두기")
+    tone = st.selectbox("톤(Style)", ["진지", "서정적", "암울한", "희극적", "긴장감", "몽환적"], index=1)
+    length = st.selectbox("원하는 길이", ["짧은 샘플(대사 6~10줄)", "중간(대사 10~30줄)", "긴(장면 확장)"], index=1)
 
-    e_score = st.slider("외향성(E) ← 0 (내향) ... 100 (외향) →", min_value=0, max_value=100, value=45)
-    n_score = st.slider("직관(N) ← 0 (감각) ... 100 (직관) →", min_value=0, max_value=100, value=55)
-    t_score = st.slider("사고(T) ← 0 (감정) ... 100 (사고) →", min_value=0, max_value=100, value=50)
-    j_score = st.slider("계획(J) ← 0 (즉흥) ... 100 (계획) →", min_value=0, max_value=100, value=60)
+    st.write("")
+    run_with_ai = st.checkbox("OpenAI API 사용 (키 필요) — 더 정교한 결과", value=False)
+    if run_with_ai:
+        st.info("OpenAI API 키는 `st.secrets['OPENAI_API_KEY']` 또는 환경변수 OPENAI_API_KEY에 설정하세요.")
 
-    if st.button("결과 보기"):
-        mbti, perc = calc_mbti(e_score, n_score, t_score, j_score)
-        info = get_mbti_info(mbti)
+    if st.button("장면 생성"):
+        if not prompt.strip():
+            st.warning("장면 한 줄 설명을 적어줘. 대충 적어도 돼.")
+        else:
+            with st.spinner("장면 생성 중..."):
+                try:
+                    if run_with_ai and OPENAI_AVAILABLE:
+                        content = openai_generate(role, prompt, chars, tone, length)
+                    elif run_with_ai and not OPENAI_AVAILABLE:
+                        st.warning("openai 라이브러리를 찾을 수 없습니다. 로컬 템플릿으로 생성합니다.")
+                        content = local_generate(role, prompt, chars, tone, length)
+                    else:
+                        content = local_generate(role, prompt, chars, tone, length)
+                except Exception as e:
+                    st.error(f"생성 중 오류: {e}")
+                    content = local_generate(role, prompt, chars, tone, length)
 
-        st.subheader(f"예상 MBTI: {mbti}")
-        st.write(info["desc"])
-        st.write("**강점**: " + ", ".join(info["strengths"]))
-        st.write("**약점**: " + ", ".join(info["weaknesses"]))
-        st.write("**추천 직업**: " + ", ".join(info["jobs"]))
-        st.write("**해당 유형 연예인(예시)**: " + info["celebrity"])
-        st.markdown("---")
-        st.write("**세부 점수(0-100)**")
-        st.write(f"E 점수: {perc['E_percent']:.0f} / N 점수: {perc['N_percent']:.0f} / T 점수: {perc['T_percent']:.0f} / J 점수: {perc['J_percent']:.0f}")
+            st.markdown("### 결과 (미리보기)")
+            st.code(content, language="")
 
-        st.markdown("---")
-        st.write("**재미있는 밈**")
-        # 밈 샘플
-        memes = [
-            "“아니.. 그거 내 스타일인데 왜 내가 모르는 거야?”",
-            "“내 계획: 1) 계획 세우기 2) 계획 세우기 3) 계획 세우기”",
-            "“감정은 뒤로 미뤄도 돼. 문제는 미뤄진 감정이 터질 때.”",
-            "“팀 회의 요약: 아이디어 100개, 실행 0개.”"
-        ]
-        st.info(random.choice(memes))
+            # 다운로드 버튼 (txt)
+            file_name = f"scene_{role.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            st.download_button("TXT로 다운로드", data=content, file_name=file_name, mime="text/plain")
 
-        st.success("교수님: '데이터 드리븐 접근 잘했네.' (내 말 아님, 너 말이 맞아.)")
+with col2:
+    st.markdown("## 사용 가이드")
+    st.write(
+        """
+- 간단한 문장(상황/장르/감정)을 입력하면 해당 롤 관점으로 장면을 확장합니다.
+- OpenAI API 키가 있으면 더 자연스럽고 깊이 있는 대본을 생성할 수 있습니다.
+- 결과를 TXT로 받아 교수님 보고서에 그대로 첨부하면 편함.
+"""
+    )
+    st.markdown("### 역할별 활용 팁")
+    st.write("- **시나리오 작가**: 플롯 비트와 갈등을 강화하고 싶을 때.")
+    st.write("- **인물 분석가**: 캐릭터 동기와 감정선을 구체화할 때.")
+    st.write("- **서사 구조 전문가**: 해당 장면의 이야기적 위치와 기능을 고민할 때.")
+    st.write("- **극작가**: 무대 연출 지시와 배우 디렉션이 필요할 때.")
+    st.write("- **카메라 워크 감독**: 시각적 연출과 샷리스트가 필요할 때.")
 
-elif app_mode == "이상형 분석기":
-    st.header("💘 이상형 분석기 (간단 kNN)")
-    st.write("네가 원하는 4가지 속성을 슬라이더로 입력하면, 저장된 캐릭터 중 가장 가까운 캐릭터를 찾아줌.")
-
-    t_fur = st.slider("털이 많은 정도", 0, 100, 50)
-    t_soft = st.slider("부드러움", 0, 100, 60)
-    t_char = st.slider("카리스마", 0, 100, 50)
-    t_safe = st.slider("안정감", 0, 100, 50)
-
-    if st.button("추천 받기"):
-        user_traits = [t_fur, t_soft, t_char, t_safe]
-        best, dist = find_nearest_character(user_traits)
-        st.subheader(f"추천 캐릭터: {best['name']}")
-        st.write(best["desc"])
-        st.write("**강점**: " + ", ".join(best["strengths"]))
-        st.write(f"유사도 거리(작을수록 유사): {dist:.2f}")
-
-        # 규칙 기반 매칭 설명
-        st.markdown("---")
-        st.write("**형이 왜 이 캐릭터와 잘 맞는지(규칙 기반 분석)**")
-        reasons = []
-        trait_names = ["털많음", "부드러움", "카리스마", "안정감"]
-        for i, (u, v) in enumerate(zip(user_traits, best["traits"])):
-            diff = abs(u - v)
-            if diff <= 10:
-                reasons.append(f"- {trait_names[i]}: 거의 일치 ({u} vs {v}) — *굉장히 잘 맞음*")
-            elif diff <= 25:
-                reasons.append(f"- {trait_names[i]}: 비슷한 편 ({u} vs {v}) — *보완 가능*")
-            else:
-                reasons.append(f"- {trait_names[i]}: 차이 큼 ({u} vs {v}) — *다른 점이 매력 포인트일 수 있음*")
-        for r in reasons:
-            st.write(r)
-
-        st.markdown("---")
-        st.write("**교수님 프레젠테이션용 한 줄**")
-        st.write(f"> 사용자는 선택한 4차원 선호도(털:{t_fur}, 부드러움:{t_soft}, 카리스마:{t_char}, 안정감:{t_safe})를 기반으로 '{best['name']}'을 추천받았습니다. (단순 kNN 방식)")
-
-        st.info("참고: 데이터는 로컬 dict로 저장되어 있어 API 필요 없음. 더 많은 캐릭터를 추가하면 정확도가 올라감.")
-
-# 하단: 도움말 및 확장 제안
-st.sidebar.markdown("---")
-st.sidebar.write("확장 아이디어:")
-st.sidebar.write("- MBTI 데이터베이스 확장 (16유형 모두)")
-st.sidebar.write("- 캐릭터 20~50개로 늘리고 가중치 설정 추가")
-st.sidebar.write("- k>1 투표 방식, 표준화 (z-score) 적용")
-st.sidebar.write("- 결과를 PDF로 저장(보고서 제출용)")
-
-st.sidebar.markdown("Made for: 형 — Streamlit 과제용 깔끔한 데모")
+st.markdown("---")
+st.caption("Made for: 형 — 창작 과제용 (원하면 README, 깃허브 구조도 만들어줌)")
